@@ -4294,7 +4294,7 @@ do
 		local function restart()
 			task.spawn(function()
 				pcall(function()
-					LocalPlayer:Kick("Universe: restarting server")
+					LocalPlayer:Kick("Restarting server")
 				end)
 
 				for _ = 1, 20 do
