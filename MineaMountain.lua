@@ -54,6 +54,9 @@ local State = {
 	autoBuyRadars = false,
 	minValue = 2000000,
 	valueFilter = true,
+	autoPickupMinValue = 0,
+	autoPickupMinLuck = 0,
+	autoPickupTiers = {},
 	espScale = 0.7,
 	playerScale = 0.6,
 	boulderScale = 0.6,
@@ -582,6 +585,21 @@ local function meetsFilter(inst, value)
 		return true
 	end
 	return (value or crystalValue(inst)) >= State.minValue
+end
+
+local function focusLuckEnabled()
+	local toggle = Library.Toggles and Library.Toggles["FocusLuckCrystals"]
+	return toggle ~= nil and toggle.Value == true
+end
+
+local function autoPickupFilter(inst)
+	if next(State.autoPickupTiers) ~= nil and not State.autoPickupTiers[crystalRarity(inst)] then
+		return false
+	end
+	if focusLuckEnabled() then
+		return math.floor(crystalLuck(inst) * 100 + 0.5) >= State.autoPickupMinLuck
+	end
+	return crystalValue(inst) >= State.autoPickupMinValue
 end
 
 local function ownsGamepass(name)
@@ -1593,7 +1611,7 @@ end)
 local pickupFound = {}
 local pickupSeen = {}
 
-local function pickupCandidates(free, origin, filterFunc)
+local function pickupCandidates(free, origin, filterFunc, skipValueFilter)
 	local found = pickupFound
 	local seen = pickupSeen
 	table.clear(found)
@@ -1619,9 +1637,8 @@ local function pickupCandidates(free, origin, filterFunc)
 			return
 		end
 
-
 		local value = crystalValue(child)
-		if not meetsFilter(child, value) then
+		if not skipValueFilter and not meetsFilter(child, value) then
 			return
 		end
 
@@ -1831,7 +1848,7 @@ local function instantGrab()
 	end
 end
 
-local function pickupStep(filterFunc)
+local function pickupStep(filterFunc, skipValueFilter)
 	local now = os.clock()
 	if now - State.lastPickup < PICK.cooldown then
 		return
@@ -1857,7 +1874,7 @@ local function pickupStep(filterFunc)
 		end
 	end
 
-	local candidatesList = pickupCandidates(free, root.Position, filterFunc)
+	local candidatesList = pickupCandidates(free, root.Position, filterFunc, skipValueFilter)
 	if #candidatesList == 0 then
 		requestStream(root.Position)
 		return
@@ -1982,7 +1999,7 @@ Connections.schedulerConn = Services.RunService.Heartbeat:Connect(function(delta
 	end
 
 	if State.autoPickupActive then
-		local ok, err = pcall(pickupStep)
+		local ok, err = pcall(pickupStep, autoPickupFilter, true)
 		if not ok then
 			reportError("pickup", err)
 		end
@@ -3449,6 +3466,61 @@ do
 				State.autoPickupActive = value
 			end,
 		})
+
+		PickupBox:AddDivider()
+		PickupBox:AddLabel("Auto Pickup follows the Focus Luck Crystals toggle (Auto Farm Crystal box): value-based when off, luck-based when on.", true)
+
+		PickupBox:AddInput("AutoPickupMinValue", {
+			Text = "Min Value",
+			Default = "0",
+			Placeholder = "2m",
+			Numeric = false,
+			Finished = false,
+			Callback = function(text)
+				local parsed = parseValue(text)
+				if parsed then
+					State.autoPickupMinValue = math.max(parsed, 0)
+				end
+			end,
+		})
+
+		PickupBox:AddInput("AutoPickupMinLuck", {
+			Text = "Min Luck",
+			Default = "0",
+			Placeholder = "10",
+			Numeric = true,
+			Finished = false,
+			Callback = function(text)
+				local parsed = tonumber(text)
+				if parsed then
+					State.autoPickupMinLuck = math.max(parsed, 0)
+				end
+			end,
+		})
+
+		PickupBox:AddDropdown("AutoPickupTiers", {
+			Text = "Tiers",
+			Values = TIER_NAMES,
+			Multi = true,
+			AllowNull = true,
+			Default = {},
+			Callback = function(value)
+				table.clear(State.autoPickupTiers)
+				if type(value) == "table" then
+					for key, flag in pairs(value) do
+						if type(key) == "string" and flag == true then
+							State.autoPickupTiers[key] = true
+						elseif type(flag) == "string" then
+							State.autoPickupTiers[flag] = true
+						end
+					end
+				elseif type(value) == "string" then
+					State.autoPickupTiers[value] = true
+				end
+			end,
+		})
+
+		PickupBox:AddDivider()
 
 		PickupBox:AddToggle("InstantPrompt", {
 			Text = "Instant Prompt",
