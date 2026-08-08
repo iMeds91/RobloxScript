@@ -54,6 +54,9 @@ local State = {
 	autoBuyRadars = false,
 	minValue = 2000000,
 	valueFilter = true,
+	espMinWeight = 0,
+	espMinLuck = 0,
+	espTiers = {},
 	autoPickupMinValue = 0,
 	autoPickupMinLuck = 0,
 	autoPickupTiers = {},
@@ -587,6 +590,30 @@ local function meetsFilter(inst, value)
 	return (value or crystalValue(inst)) >= State.minValue
 end
 
+local function espPassesFilter(inst, value)
+	if not meetsFilter(inst, value) then
+		return false
+	end
+
+	if State.espMinWeight > 0 and crystalWeight(inst) < State.espMinWeight then
+		return false
+	end
+
+	if State.espMinLuck > 0 then
+		local luckOk, luck = pcall(crystalLuck, inst)
+		local points = math.floor((luckOk and luck or 0) * 100 + 0.5)
+		if points < State.espMinLuck then
+			return false
+		end
+	end
+
+	if next(State.espTiers) ~= nil and not State.espTiers[crystalRarity(inst)] then
+		return false
+	end
+
+	return true
+end
+
 local function focusLuckEnabled()
 	local toggle = Library.Toggles and Library.Toggles["FocusLuckCrystals"]
 	return toggle ~= nil and toggle.Value == true
@@ -1008,7 +1035,7 @@ local function syncCrystal(inst)
 	local hidden = not State.espActive or getAttr(inst, "Collected") == true
 
 	if not hidden then
-		hidden = not meetsFilter(inst)
+		hidden = not espPassesFilter(inst)
 	end
 
 	if hidden then
@@ -3256,6 +3283,62 @@ do
 			Numeric = false,
 			Finished = false,
 			Callback = setMinValue,
+		})
+
+		CrystalBox:AddDivider()
+		CrystalBox:AddLabel("Min Weight, Min Luck, and Tiers further hide crystals from ESP. Leave at 0 / empty to show everything.", true)
+
+		CrystalBox:AddInput("EspMinWeight", {
+			Text = "Min Weight (kg)",
+			Default = "0",
+			Placeholder = "50",
+			Numeric = true,
+			Finished = false,
+			Callback = function(text)
+				local parsed = tonumber(text)
+				if parsed then
+					State.espMinWeight = math.max(parsed, 0)
+					requestRefresh()
+				end
+			end,
+		})
+
+		CrystalBox:AddInput("EspMinLuck", {
+			Text = "Min Luck",
+			Default = "0",
+			Placeholder = "10",
+			Numeric = true,
+			Finished = false,
+			Callback = function(text)
+				local parsed = tonumber(text)
+				if parsed then
+					State.espMinLuck = math.max(parsed, 0)
+					requestRefresh()
+				end
+			end,
+		})
+
+		CrystalBox:AddDropdown("EspTiers", {
+			Text = "Tiers",
+			Values = TIER_NAMES,
+			Multi = true,
+			AllowNull = true,
+			Default = {},
+			Callback = function(value)
+				table.clear(State.espTiers)
+				if type(value) == "table" then
+					for key, flag in pairs(value) do
+						if type(key) == "string" and flag == true then
+							State.espTiers[key] = true
+						elseif type(flag) == "string" then
+							State.espTiers[flag] = true
+						end
+					end
+				elseif type(value) == "string" then
+					State.espTiers[value] = true
+				end
+				requestRefresh()
+			end,
 		})
 
 		StatsLabel = CrystalBox:AddLabel("Tracking: 0  |  Shown: 0")
