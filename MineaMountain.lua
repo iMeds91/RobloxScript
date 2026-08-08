@@ -261,7 +261,7 @@ local COLORS = {
 	hexLuck = "FFC400",
 }
 
-local TIER_NAMES = { "Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic" }
+local TIER_NAMES = { "Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic", "Empyrean", "Pulsar", "Quasar" }
 
 local LUCK = {
 	rarity = { 1, 1.6, 2.6, 4.2, 7, 12 },
