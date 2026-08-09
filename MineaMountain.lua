@@ -4104,6 +4104,7 @@ do
 		local pendingFinish = false
 		local lootUntil = 0
 		local chaseDeadline = 0
+		local chaseTarget = nil
 		local statusText = "Idle"
 		local scanRetries = 0
 		local lastPos
@@ -4728,6 +4729,7 @@ do
 			pendingFinish = finish == true
 			lootUntil = os.clock() + LOOT_TIME
 			chaseDeadline = os.clock() + CHASE_TIMEOUT
+			chaseTarget = nil
 			phase = "loot"
 			statusText = "Looting runes"
 		end
@@ -4744,6 +4746,7 @@ do
 			pendingFinish = false
 			lootUntil = 0
 			chaseDeadline = 0
+			chaseTarget = nil
 			spotFrame = nil
 			aimTurn = 0
 			blindClock = 0
@@ -4993,19 +4996,41 @@ do
 			end
 
 			if phase == "loot" then
-				if now < chaseDeadline then
-					local candidate, distance = nearestChaseCrystal(root.Position)
-					if candidate then
-						extendChaseDeadline(distance)
-						spotFrame = approach(candidate, nil, 0, candidate.Position, 0)
-						hold(spotFrame, candidate.Position)
+				-- Only chase stray crystals during the final sweep (after every
+				-- targeted boulder is gone), not between individual boulders,
+				-- so we never juggle two far-apart targets mid-farm.
+				if pendingFinish and now < chaseDeadline then
+					if chaseTarget then
+						local stillValid = chaseTarget.Parent
+							and getAttr(chaseTarget, "Collected") ~= true
+							and meetsFilter(chaseTarget, crystalValue(chaseTarget))
+							and autoPickupFilter(chaseTarget)
+							and surfaceDistance(chaseTarget, root.Position) > PICK.range
+
+						if not stillValid then
+							chaseTarget = nil
+						end
+					end
+
+					if not chaseTarget then
+						local candidate, distance = nearestChaseCrystal(root.Position)
+						if candidate then
+							chaseTarget = candidate
+							extendChaseDeadline(distance)
+						end
+					end
+
+					if chaseTarget then
+						spotFrame = approach(chaseTarget, nil, 0, chaseTarget.Position, 0)
+						hold(spotFrame, chaseTarget.Position)
 						Mountain.grabNear(RUNE_SWEEP)
-						statusText = string.format("Chasing crystal  %s", formatDistance(distance))
+						statusText = string.format("Chasing crystal  %s", formatDistance(surfaceDistance(chaseTarget, root.Position)))
 						return
 					end
 				end
 
 				spotFrame = nil
+				chaseTarget = nil
 				if lastSpot then
 					hold(lastSpot)
 				end
@@ -5039,6 +5064,7 @@ do
 				if now < chaseDeadline then
 					local candidate, distance = nearestChaseCrystal(root.Position)
 					if candidate then
+						chaseTarget = candidate
 						extendChaseDeadline(distance)
 						lootUntil = now + LOOT_TIME
 						phase = "loot"
@@ -5156,6 +5182,7 @@ do
 				pendingFinish = false
 				lootUntil = 0
 				chaseDeadline = 0
+				chaseTarget = nil
 				scanRetries = 0
 				stuckClock = 0
 				lastPos = nil
