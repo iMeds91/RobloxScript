@@ -4067,6 +4067,8 @@ do
 		local CHASE_TIMEOUT = 10.0
 		local CHASE_SPEED = 300
 		local CHASE_BUFFER = 3.0
+		local CHASE_LIFT = 5
+		local CHASE_GRAB_GAP = 0.05
 
 		local PICK_NAMES = {
 			["Rusty Scrapper"] = true, ["Weathered Wood"] = true, ["Chipped Stone"] = true,
@@ -4105,6 +4107,7 @@ do
 		local lootUntil = 0
 		local chaseDeadline = 0
 		local chaseTarget = nil
+		local chaseGrabClock = 0
 		local statusText = "Idle"
 		local scanRetries = 0
 		local lastPos
@@ -4730,6 +4733,7 @@ do
 			lootUntil = os.clock() + LOOT_TIME
 			chaseDeadline = os.clock() + CHASE_TIMEOUT
 			chaseTarget = nil
+			chaseGrabClock = 0
 			phase = "loot"
 			statusText = "Looting runes"
 		end
@@ -4747,6 +4751,7 @@ do
 			lootUntil = 0
 			chaseDeadline = 0
 			chaseTarget = nil
+			chaseGrabClock = 0
 			spotFrame = nil
 			aimTurn = 0
 			blindClock = 0
@@ -4998,14 +5003,16 @@ do
 			if phase == "loot" then
 				-- Only chase stray crystals during the final sweep (after every
 				-- targeted boulder is gone), not between individual boulders,
-				-- so we never juggle two far-apart targets mid-farm.
+				-- so we never juggle two far-apart targets mid-farm. Reuses the
+				-- Auto Farm Crystal approach: lock one target anywhere on the
+				-- map, hover directly above it, and fire the grab remote
+				-- directly instead of waiting on the range-limited auto pickup.
 				if pendingFinish and now < chaseDeadline then
 					if chaseTarget then
 						local stillValid = chaseTarget.Parent
 							and getAttr(chaseTarget, "Collected") ~= true
 							and meetsFilter(chaseTarget, crystalValue(chaseTarget))
 							and autoPickupFilter(chaseTarget)
-							and surfaceDistance(chaseTarget, root.Position) > PICK.range
 
 						if not stillValid then
 							chaseTarget = nil
@@ -5021,10 +5028,17 @@ do
 					end
 
 					if chaseTarget then
-						spotFrame = approach(chaseTarget, nil, 0, chaseTarget.Position, 0)
-						hold(spotFrame, chaseTarget.Position)
+						spotFrame = nil
+						local spot = chaseTarget.Position
+						hold(CFrame.new(spot + Vector3.new(0, CHASE_LIFT, 0), spot), spot)
+
+						if now - chaseGrabClock >= CHASE_GRAB_GAP then
+							chaseGrabClock = now
+							grabCrystal(chaseTarget, crystalPrompt(chaseTarget))
+						end
+
 						Mountain.grabNear(RUNE_SWEEP)
-						statusText = string.format("Chasing crystal  %s", formatDistance(surfaceDistance(chaseTarget, root.Position)))
+						statusText = string.format("Chasing crystal  %s", formatDistance((chaseTarget.Position - root.Position).Magnitude))
 						return
 					end
 				end
@@ -5065,6 +5079,7 @@ do
 					local candidate, distance = nearestChaseCrystal(root.Position)
 					if candidate then
 						chaseTarget = candidate
+						chaseGrabClock = 0
 						extendChaseDeadline(distance)
 						lootUntil = now + LOOT_TIME
 						phase = "loot"
