@@ -1726,6 +1726,69 @@ local function pickupCandidates(free, origin, filterFunc, skipValueFilter)
 	return found
 end
 
+local chaseSeen = {}
+
+local function nearestChaseCrystal(origin)
+	local seen = chaseSeen
+	table.clear(seen)
+	local now = os.clock()
+	local free = backpackFree()
+
+	local best, bestDistance
+
+	local function consider(child)
+		if not child or seen[child] then
+			return
+		end
+		seen[child] = true
+
+		if not child.Parent or not isCrystal(child) or getAttr(child, "Collected") == true then
+			return
+		end
+
+		local claim = Storage.claimed[child]
+		if claim and now - claim < PICK.retry then
+			return
+		end
+
+		if not meetsFilter(child, crystalValue(child)) or not autoPickupFilter(child) then
+			return
+		end
+
+		if crystalWeight(child) > free then
+			return
+		end
+
+		local distance = surfaceDistance(child, origin)
+		if distance <= PICK.range then
+			return
+		end
+
+		if not best or distance < bestDistance then
+			best = child
+			bestDistance = distance
+		end
+	end
+
+	for inst in pairs(Storage.registry) do
+		consider(inst)
+	end
+
+	eachContainer(function(container)
+		for _, child in ipairs(container:GetChildren()) do
+			if child:IsA("BasePart") then
+				consider(child)
+			elseif child:IsA("Model") then
+				for _, inner in ipairs(child:GetChildren()) do
+					consider(inner)
+				end
+			end
+		end
+	end)
+
+	return best, bestDistance
+end
+
 local function grabCrystal(inst, prompt)
 	local sent = false
 
@@ -4001,6 +4064,9 @@ do
 		local EQUIP_STEP = 0.5
 		local RESET_WAIT = 1.5
 		local STABILIZE_SECONDS = 30
+		local CHASE_TIMEOUT = 10.0
+		local CHASE_SPEED = 300
+		local CHASE_BUFFER = 3.0
 
 		local PICK_NAMES = {
 			["Rusty Scrapper"] = true, ["Weathered Wood"] = true, ["Chipped Stone"] = true,
@@ -4037,6 +4103,7 @@ do
 		local partCursor = 0
 		local pendingFinish = false
 		local lootUntil = 0
+		local chaseDeadline = 0
 		local statusText = "Idle"
 		local scanRetries = 0
 		local lastPos
@@ -4650,9 +4717,17 @@ do
 			return CFrame.new(center + away * reach + Vector3.new(0, AIM_LIFT[2], 0), center)
 		end
 
+		local function extendChaseDeadline(distance)
+			local needed = os.clock() + distance / CHASE_SPEED + CHASE_BUFFER
+			if needed > chaseDeadline then
+				chaseDeadline = needed
+			end
+		end
+
 		local function beginLoot(finish)
 			pendingFinish = finish == true
 			lootUntil = os.clock() + LOOT_TIME
+			chaseDeadline = os.clock() + CHASE_TIMEOUT
 			phase = "loot"
 			statusText = "Looting runes"
 		end
@@ -4668,6 +4743,7 @@ do
 			dryRounds = 0
 			pendingFinish = false
 			lootUntil = 0
+			chaseDeadline = 0
 			spotFrame = nil
 			aimTurn = 0
 			blindClock = 0
@@ -4917,6 +4993,19 @@ do
 			end
 
 			if phase == "loot" then
+				if now < chaseDeadline then
+					local candidate, distance = nearestChaseCrystal(root.Position)
+					if candidate then
+						extendChaseDeadline(distance)
+						spotFrame = approach(candidate, nil, 0, candidate.Position, 0)
+						hold(spotFrame, candidate.Position)
+						Mountain.grabNear(RUNE_SWEEP)
+						statusText = string.format("Chasing crystal  %s", formatDistance(distance))
+						return
+					end
+				end
+
+				spotFrame = nil
 				if lastSpot then
 					hold(lastSpot)
 				end
@@ -4945,6 +5034,17 @@ do
 			if phase == "reset" then
 				if now < waitUntil then
 					return
+				end
+
+				if now < chaseDeadline then
+					local candidate, distance = nearestChaseCrystal(root.Position)
+					if candidate then
+						extendChaseDeadline(distance)
+						lootUntil = now + LOOT_TIME
+						phase = "loot"
+						statusText = "Chasing leftover crystal"
+						return
+					end
 				end
 
 				if autoRejoin then
@@ -5055,6 +5155,7 @@ do
 				heldPick = nil
 				pendingFinish = false
 				lootUntil = 0
+				chaseDeadline = 0
 				scanRetries = 0
 				stuckClock = 0
 				lastPos = nil
