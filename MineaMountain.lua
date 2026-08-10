@@ -79,8 +79,6 @@ local State = {
 	streamMark = 0,
 	streamSpot = nil,
 	speedHooked = nil,
-	digBurst = 6,
-	digGap = 0.04,
 }
 
 local Storage = {
@@ -4501,7 +4499,7 @@ do
 			end
 
 			return pcall(function()
-				for index = 1, State.digBurst do
+				for index = 1, SWING_BURST do
 					if index % 2 == 0 then
 						fireRemote(event, name, core)
 					else
@@ -4618,7 +4616,7 @@ do
 					end
 				end
 			end
-			return math.clamp(State.digGap, SWING_FLOOR, 0.5)
+			return SWING_GAP
 		end
 
 		local function pickTarget()
@@ -5238,31 +5236,6 @@ do
 			Default = Config.AutoRejoinBoulders,
 			Callback = function(value)
 				autoRejoin = value
-			end,
-		})
-
-		FarmBox:AddSlider("DigBurst", {
-			Text = "Dig Burst",
-			Default = State.digBurst,
-			Min = 1,
-			Max = 12,
-			Rounding = 0,
-			Compact = false,
-			Callback = function(value)
-				State.digBurst = value
-			end,
-		})
-
-		FarmBox:AddSlider("DigSpeed", {
-			Text = "Dig Speed",
-			Default = math.floor(State.digGap * 1000 + 0.5),
-			Min = 20,
-			Max = 200,
-			Rounding = 0,
-			Suffix = "ms",
-			Compact = false,
-			Callback = function(value)
-				State.digGap = value / 1000
 			end,
 		})
 
