@@ -6,6 +6,8 @@ local Config = {
 	NormalSpeed = 16,
 	FlySpeed = 100,
 	AutoRejoinBoulders = false,
+	AutoRejoinDisconnect = false,
+	AutoRejoinDisconnectDelay = 60,
 	AutoBuyBombs = false,
 	AutoBuyRadars = false,
 	RuneGrabRange = 20,
@@ -41,6 +43,7 @@ local Services = {
 
 local LocalPlayer = Services.Players.LocalPlayer
 local Mouse = LocalPlayer:GetMouse()
+local CapturedJobId = game.JobId
 
 local State = {
 	afkRunning = true,
@@ -75,6 +78,8 @@ local State = {
 	instantAccumulator = math.huge,
 	registryCount = 0,
 	espCount = 0,
+	autoRejoinDisconnect = Config.AutoRejoinDisconnect,
+	disconnectedSince = nil,
 	containerClock = 0,
 	streamMark = 0,
 	streamSpot = nil,
@@ -3901,7 +3906,7 @@ do
 			end
 
 			reviving = true
-			local jobId = game.JobId
+			local jobId = (type(game.JobId) == "string" and game.JobId ~= "") and game.JobId or CapturedJobId
 
 			task.spawn(function()
 				for _ = 1, RETRY_LIMIT do
@@ -4018,6 +4023,76 @@ do
 				end
 			end)
 		end
+	end
+
+	install()
+end
+
+local DisconnectWatchdog = {}
+
+do
+	local CHECK_STEP = 2
+	local alive = true
+
+	local function isDisconnected()
+		if not LocalPlayer.Parent then
+			return true
+		end
+
+		local ok, message = pcall(function()
+			return Services.GuiService:GetErrorMessage()
+		end)
+
+		return ok and type(message) == "string" and message ~= ""
+	end
+
+	local function install()
+		task.spawn(function()
+			while alive do
+				task.wait(CHECK_STEP)
+
+				if not alive then
+					break
+				end
+
+				if not State.autoRejoinDisconnect then
+					State.disconnectedSince = nil
+					continue
+				end
+
+				local ok, disconnected = pcall(isDisconnected)
+				disconnected = ok and disconnected
+
+				if not disconnected then
+					State.disconnectedSince = nil
+					continue
+				end
+
+				if not State.disconnectedSince then
+					State.disconnectedSince = os.clock()
+					pcall(function()
+						Library:Notify(
+							string.format("Disconnected — rejoining same server in %ds if not resolved", Config.AutoRejoinDisconnectDelay),
+							4
+						)
+					end)
+				elseif os.clock() - State.disconnectedSince >= Config.AutoRejoinDisconnectDelay then
+					State.disconnectedSince = nil
+					pcall(function()
+						Library:Notify("Still disconnected — rejoining same server", 4)
+					end)
+					Net.rejoin()
+				end
+			end
+		end)
+	end
+
+	function DisconnectWatchdog.reset()
+		State.disconnectedSince = nil
+	end
+
+	function DisconnectWatchdog.stop()
+		alive = false
 	end
 
 	install()
@@ -6476,6 +6551,33 @@ do
 			AutoloadLabel:SetText("Current autoload config: none")
 		end)
 
+		local ServerGroup = SettingsTab:AddRightGroupbox("Server", "wifi")
+
+		ServerGroup:AddToggle("AutoRejoinDisconnect", {
+			Text = "Auto Rejoin on Disconnect",
+			Default = Config.AutoRejoinDisconnect,
+			Callback = function(value)
+				State.autoRejoinDisconnect = value
+				if not value then
+					DisconnectWatchdog.reset()
+				end
+			end,
+		})
+
+		ServerGroup:AddInput("AutoRejoinDisconnectDelay", {
+			Text = "Rejoin Delay (seconds)",
+			Default = tostring(Config.AutoRejoinDisconnectDelay),
+			Placeholder = "60",
+			Numeric = true,
+			Finished = true,
+			Callback = function(text)
+				local parsed = tonumber(text)
+				if parsed and parsed > 0 then
+					Config.AutoRejoinDisconnectDelay = parsed
+				end
+			end,
+		})
+
 		local MenuGroup = SettingsTab:AddRightGroupbox("Menu", "wrench")
 
 		MenuGroup:AddLabel("Menu bind"):AddKeyPicker("MenuKeybind", {
@@ -6524,6 +6626,10 @@ local function cleanupAll()
 
 	if Net.stop then
 		Net.stop()
+	end
+
+	if DisconnectWatchdog.stop then
+		DisconnectWatchdog.stop()
 	end
 
 	for _, connection in ipairs(Storage.netConns) do
