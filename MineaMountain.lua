@@ -62,6 +62,7 @@ local State = {
 	espTiers = {},
 	autoPickupMinValue = 0,
 	autoPickupMinLuck = 0,
+	autoPickupMode = "Value",
 	autoPickupTiers = {},
 	espScale = 0.7,
 	playerScale = 0.6,
@@ -619,18 +620,20 @@ local function espPassesFilter(inst, value)
 	return true
 end
 
-local function focusLuckEnabled()
-	local toggle = Library.Toggles and Library.Toggles["FocusLuckCrystals"]
-	return toggle ~= nil and toggle.Value == true
-end
-
 local function autoPickupFilter(inst)
 	if next(State.autoPickupTiers) ~= nil and not State.autoPickupTiers[crystalRarity(inst)] then
 		return false
 	end
-	if focusLuckEnabled() then
+
+	local mode = State.autoPickupMode
+	if mode == "Luck" then
 		return math.floor(crystalLuck(inst) * 100 + 0.5) >= State.autoPickupMinLuck
+	elseif mode == "Both" then
+		local value = crystalValue(inst)
+		local luckPts = math.floor(crystalLuck(inst) * 100 + 0.5)
+		return value >= State.autoPickupMinValue or luckPts >= State.autoPickupMinLuck
 	end
+
 	return crystalValue(inst) >= State.autoPickupMinValue
 end
 
@@ -3619,11 +3622,20 @@ do
 		})
 
 		PickupBox:AddDivider()
-		PickupBox:AddLabel("Auto Pickup follows the Focus Luck Crystals toggle (Auto Farm Crystal box): value-based when off, luck-based when on.", true)
+		PickupBox:AddLabel("Pickup Mode decides whether Value, Luck, or Both (either) thresholds are used. Auto Farm Crystal also uses these thresholds when digging.", true)
+
+		PickupBox:AddDropdown("AutoPickupMode", {
+			Text = "Pickup Mode",
+			Values = { "Value", "Luck", "Both" },
+			Default = "Value",
+			Callback = function(value)
+				State.autoPickupMode = value
+			end,
+		})
 
 		PickupBox:AddInput("AutoPickupMinValue", {
 			Text = "Min Value",
-			Default = "0",
+			Default = Config.MinCrystalValue,
 			Placeholder = "2m",
 			Numeric = false,
 			Finished = false,
@@ -5465,7 +5477,6 @@ do
 		local active = false
 		local autoSell = false
 		local focusLuck = false
-		local minLuckPoints = 4
 		local autoPlantLuck = false
 		local plantClock = 0
 		local heldPick
@@ -5709,7 +5720,7 @@ do
 						local isCryst = getAttr(child, "Tier") ~= nil or child:GetAttribute("MeshTemplate") ~= nil
 						if isCryst then
 							local luckPts = math.floor(crystalLuck(child) * 100 + 0.5)
-							if luckPts >= minLuckPoints then
+							if luckPts >= State.autoPickupMinLuck then
 								list[#list + 1] = child
 							end
 						end
@@ -5749,13 +5760,13 @@ do
 				local score = 0
 				if focusLuck then
 					local luckPts = math.floor(crystalLuck(inst) * 100 + 0.5)
-					if luckPts < minLuckPoints then
+					if luckPts < State.autoPickupMinLuck then
 						return
 					end
 					score = luckPts
 				else
 					local value = crystalValue(inst)
-					if not meetsFilter(inst, value) then
+					if value < State.autoPickupMinValue then
 						return
 					end
 					score = value
@@ -6008,10 +6019,12 @@ do
 			if focusLuck then
 				pickupStep(function(inst)
 					local luckPts = math.floor(crystalLuck(inst) * 100 + 0.5)
-					return luckPts >= minLuckPoints
+					return luckPts >= State.autoPickupMinLuck
 				end)
 			else
-				pickupStep()
+				pickupStep(function(inst)
+					return crystalValue(inst) >= State.autoPickupMinValue
+				end, true)
 			end
 
 			if heldPick == nil or heldPick.Parent ~= LocalPlayer.Character then
@@ -6212,7 +6225,7 @@ do
 		end
 
 		local MoneyBox = Tabs.farming:AddRightGroupbox("Auto Farm Crystal", "gem")
-		MoneyBox:AddLabel("Loads the mountain and digs crystals by cash value or luck points", true)
+		MoneyBox:AddLabel("Loads the mountain and digs crystals by cash value or luck points, using the Min Value / Min Luck thresholds from the Pickup box.", true)
 		MoneyBox:AddDivider()
 
 		MoneyBox:AddToggle("AutoFarmMoney", {
@@ -6226,20 +6239,6 @@ do
 			Default = false,
 			Callback = function(value)
 				focusLuck = value
-				loot = nil
-			end,
-		})
-
-		MoneyBox:AddSlider("MinLuckFilterPoints", {
-			Text = "Min Luck Points",
-			Default = 10,
-			Min = 1,
-			Max = 1000,
-			Rounding = 0,
-			Compact = false,
-			Callback = function(val)
-				minLuckPoints = val
-				Config.MinLuckBoost = val
 				loot = nil
 			end,
 		})
