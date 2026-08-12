@@ -1759,7 +1759,7 @@ local function nearestChaseCrystal(origin)
 			return
 		end
 
-		if not meetsFilter(child, crystalValue(child)) or not autoPickupFilter(child) then
+		if not autoPickupFilter(child) then
 			return
 		end
 
@@ -5098,7 +5098,6 @@ do
 					if chaseTarget then
 						local stillValid = chaseTarget.Parent
 							and getAttr(chaseTarget, "Collected") ~= true
-							and meetsFilter(chaseTarget, crystalValue(chaseTarget))
 							and autoPickupFilter(chaseTarget)
 
 						if not stillValid then
