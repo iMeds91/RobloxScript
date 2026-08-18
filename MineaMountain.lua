@@ -64,6 +64,14 @@ local State = {
 	autoPickupMinLuck = 0,
 	autoPickupMode = "Value",
 	autoPickupTiers = {},
+	boulderPickupMinValue = 0,
+	boulderPickupMinLuck = 0,
+	boulderPickupMode = "Value",
+	boulderPickupTiers = {},
+	crystalFarmMinValue = 0,
+	crystalFarmMinLuck = 0,
+	crystalFarmPickupMode = "Value",
+	crystalFarmTiers = {},
 	espScale = 0.7,
 	playerScale = 0.6,
 	boulderScale = 0.6,
@@ -635,6 +643,40 @@ local function autoPickupFilter(inst)
 	end
 
 	return crystalValue(inst) >= State.autoPickupMinValue
+end
+
+local function boulderPickupFilter(inst)
+	if next(State.boulderPickupTiers) ~= nil and not State.boulderPickupTiers[crystalRarity(inst)] then
+		return false
+	end
+
+	local mode = State.boulderPickupMode
+	if mode == "Luck" then
+		return math.floor(crystalLuck(inst) * 100 + 0.5) >= State.boulderPickupMinLuck
+	elseif mode == "Both" then
+		local value = crystalValue(inst)
+		local luckPts = math.floor(crystalLuck(inst) * 100 + 0.5)
+		return value >= State.boulderPickupMinValue or luckPts >= State.boulderPickupMinLuck
+	end
+
+	return crystalValue(inst) >= State.boulderPickupMinValue
+end
+
+local function crystalFarmPickupFilter(inst)
+	if next(State.crystalFarmTiers) ~= nil and not State.crystalFarmTiers[crystalRarity(inst)] then
+		return false
+	end
+
+	local mode = State.crystalFarmPickupMode
+	if mode == "Luck" then
+		return math.floor(crystalLuck(inst) * 100 + 0.5) >= State.crystalFarmMinLuck
+	elseif mode == "Both" then
+		local value = crystalValue(inst)
+		local luckPts = math.floor(crystalLuck(inst) * 100 + 0.5)
+		return value >= State.crystalFarmMinValue or luckPts >= State.crystalFarmMinLuck
+	end
+
+	return crystalValue(inst) >= State.crystalFarmMinValue
 end
 
 local function ownsGamepass(name)
@@ -1736,7 +1778,8 @@ end
 
 local chaseSeen = {}
 
-local function nearestChaseCrystal(origin)
+local function nearestChaseCrystal(origin, filterFunc)
+	filterFunc = filterFunc or autoPickupFilter
 	local seen = chaseSeen
 	table.clear(seen)
 	local now = os.clock()
@@ -1759,7 +1802,7 @@ local function nearestChaseCrystal(origin)
 			return
 		end
 
-		if not autoPickupFilter(child) then
+		if not filterFunc(child) then
 			return
 		end
 
@@ -3622,7 +3665,7 @@ do
 		})
 
 		PickupBox:AddDivider()
-		PickupBox:AddLabel("Pickup Mode decides whether Value, Luck, or Both (either) thresholds are used. Auto Farm Crystal also uses these thresholds when digging.", true)
+		PickupBox:AddLabel("Pickup Mode decides whether Value, Luck, or Both (either) thresholds are used for the Auto Pickup toggle below.", true)
 
 		PickupBox:AddDropdown("AutoPickupMode", {
 			Text = "Pickup Mode",
@@ -4156,6 +4199,8 @@ do
 		local CHASE_BUFFER = 3.0
 		local CHASE_LIFT = 5
 		local CHASE_GRAB_GAP = 0.05
+		local CHASE_ACTIVE_GRACE = 3.0
+		local CHASE_HARD_CAP = 45.0
 
 		local PICK_NAMES = {
 			["Rusty Scrapper"] = true, ["Weathered Wood"] = true, ["Chipped Stone"] = true,
@@ -4193,6 +4238,7 @@ do
 		local pendingFinish = false
 		local lootUntil = 0
 		local chaseDeadline = 0
+		local chaseStartClock = 0
 		local chaseTarget = nil
 		local chaseGrabClock = 0
 		local statusText = "Idle"
@@ -4818,7 +4864,8 @@ do
 		local function beginLoot(finish)
 			pendingFinish = finish == true
 			lootUntil = os.clock() + LOOT_TIME
-			chaseDeadline = os.clock() + CHASE_TIMEOUT
+			chaseStartClock = os.clock()
+			chaseDeadline = chaseStartClock + CHASE_TIMEOUT
 			chaseTarget = nil
 			chaseGrabClock = 0
 			phase = "loot"
@@ -4837,6 +4884,7 @@ do
 			pendingFinish = false
 			lootUntil = 0
 			chaseDeadline = 0
+			chaseStartClock = 0
 			chaseTarget = nil
 			chaseGrabClock = 0
 			spotFrame = nil
@@ -5098,7 +5146,7 @@ do
 					if chaseTarget then
 						local stillValid = chaseTarget.Parent
 							and getAttr(chaseTarget, "Collected") ~= true
-							and autoPickupFilter(chaseTarget)
+							and boulderPickupFilter(chaseTarget)
 
 						if not stillValid then
 							chaseTarget = nil
@@ -5106,7 +5154,7 @@ do
 					end
 
 					if not chaseTarget then
-						local candidate, distance = nearestChaseCrystal(root.Position)
+						local candidate, distance = nearestChaseCrystal(root.Position, boulderPickupFilter)
 						if candidate then
 							chaseTarget = candidate
 							extendChaseDeadline(distance)
@@ -5114,6 +5162,8 @@ do
 					end
 
 					if chaseTarget then
+						chaseDeadline = math.min(math.max(chaseDeadline, now + CHASE_ACTIVE_GRACE), chaseStartClock + CHASE_HARD_CAP)
+
 						spotFrame = nil
 						local spot = chaseTarget.Position
 						hold(CFrame.new(spot + Vector3.new(0, CHASE_LIFT, 0), spot), spot)
@@ -5162,7 +5212,7 @@ do
 				end
 
 				if now < chaseDeadline then
-					local candidate, distance = nearestChaseCrystal(root.Position)
+					local candidate, distance = nearestChaseCrystal(root.Position, boulderPickupFilter)
 					if candidate then
 						chaseTarget = candidate
 						chaseGrabClock = 0
@@ -5326,6 +5376,68 @@ do
 		})
 
 		FarmBox:AddDivider()
+		FarmBox:AddLabel("Pickup Mode decides whether Value, Luck, or Both (either) thresholds are used when chasing leftover crystals after boulders are cleared.", true)
+
+		FarmBox:AddDropdown("BoulderPickupMode", {
+			Text = "Pickup Mode",
+			Values = { "Value", "Luck", "Both" },
+			Default = "Value",
+			Callback = function(value)
+				State.boulderPickupMode = value
+			end,
+		})
+
+		FarmBox:AddInput("BoulderPickupMinValue", {
+			Text = "Min Value",
+			Default = Config.MinCrystalValue,
+			Placeholder = "2m",
+			Numeric = false,
+			Finished = false,
+			Callback = function(text)
+				local parsed = parseValue(text)
+				if parsed then
+					State.boulderPickupMinValue = math.max(parsed, 0)
+				end
+			end,
+		})
+
+		FarmBox:AddInput("BoulderPickupMinLuck", {
+			Text = "Min Luck",
+			Default = "0",
+			Placeholder = "10",
+			Numeric = true,
+			Finished = false,
+			Callback = function(text)
+				local parsed = tonumber(text)
+				if parsed then
+					State.boulderPickupMinLuck = math.max(parsed, 0)
+				end
+			end,
+		})
+
+		FarmBox:AddDropdown("BoulderPickupTiers", {
+			Text = "Tiers",
+			Values = TIER_NAMES,
+			Multi = true,
+			AllowNull = true,
+			Default = {},
+			Callback = function(value)
+				table.clear(State.boulderPickupTiers)
+				if type(value) == "table" then
+					for key, flag in pairs(value) do
+						if type(key) == "string" and flag == true then
+							State.boulderPickupTiers[key] = true
+						elseif type(flag) == "string" then
+							State.boulderPickupTiers[flag] = true
+						end
+					end
+				elseif type(value) == "string" then
+					State.boulderPickupTiers[value] = true
+				end
+			end,
+		})
+
+		FarmBox:AddDivider()
 
 		local StatusLabel = FarmBox:AddLabel("Idle", true)
 		local labelClock = 0
@@ -5475,7 +5587,6 @@ do
 
 		local active = false
 		local autoSell = false
-		local focusLuck = false
 		local autoPlantLuck = false
 		local plantClock = 0
 		local heldPick
@@ -5719,7 +5830,7 @@ do
 						local isCryst = getAttr(child, "Tier") ~= nil or child:GetAttribute("MeshTemplate") ~= nil
 						if isCryst then
 							local luckPts = math.floor(crystalLuck(child) * 100 + 0.5)
-							if luckPts >= State.autoPickupMinLuck then
+							if luckPts >= State.crystalFarmMinLuck then
 								list[#list + 1] = child
 							end
 						end
@@ -5756,19 +5867,15 @@ do
 					return
 				end
 
-				local score = 0
-				if focusLuck then
-					local luckPts = math.floor(crystalLuck(inst) * 100 + 0.5)
-					if luckPts < State.autoPickupMinLuck then
-						return
-					end
-					score = luckPts
+				if not crystalFarmPickupFilter(inst) then
+					return
+				end
+
+				local score
+				if State.crystalFarmPickupMode == "Luck" then
+					score = math.floor(crystalLuck(inst) * 100 + 0.5)
 				else
-					local value = crystalValue(inst)
-					if value < State.autoPickupMinValue then
-						return
-					end
-					score = value
+					score = crystalValue(inst)
 				end
 
 				local distance = (inst.Position - origin).Magnitude
@@ -6015,16 +6122,7 @@ do
 				return
 			end
 
-			if focusLuck then
-				pickupStep(function(inst)
-					local luckPts = math.floor(crystalLuck(inst) * 100 + 0.5)
-					return luckPts >= State.autoPickupMinLuck
-				end)
-			else
-				pickupStep(function(inst)
-					return crystalValue(inst) >= State.autoPickupMinValue
-				end, true)
-			end
+			pickupStep(crystalFarmPickupFilter, true)
 
 			if heldPick == nil or heldPick.Parent ~= LocalPlayer.Character then
 				equipClock = 0
@@ -6224,7 +6322,7 @@ do
 		end
 
 		local MoneyBox = Tabs.farming:AddRightGroupbox("Auto Farm Crystal", "gem")
-		MoneyBox:AddLabel("Loads the mountain and digs crystals by cash value or luck points, using the Min Value / Min Luck thresholds from the Pickup box.", true)
+		MoneyBox:AddLabel("Loads the mountain and digs crystals by cash value, luck points, or both.", true)
 		MoneyBox:AddDivider()
 
 		MoneyBox:AddToggle("AutoFarmMoney", {
@@ -6233,12 +6331,66 @@ do
 			Callback = setActive,
 		})
 
-		MoneyBox:AddToggle("FocusLuckCrystals", {
-			Text = "Focus Luck Crystals",
-			Default = false,
+		MoneyBox:AddDivider()
+		MoneyBox:AddLabel("Pickup Mode decides whether Value, Luck, or Both (either) thresholds are used when digging.", true)
+
+		MoneyBox:AddDropdown("CrystalFarmPickupMode", {
+			Text = "Pickup Mode",
+			Values = { "Value", "Luck", "Both" },
+			Default = "Value",
 			Callback = function(value)
-				focusLuck = value
+				State.crystalFarmPickupMode = value
 				loot = nil
+			end,
+		})
+
+		MoneyBox:AddInput("CrystalFarmMinValue", {
+			Text = "Min Value",
+			Default = Config.MinCrystalValue,
+			Placeholder = "2m",
+			Numeric = false,
+			Finished = false,
+			Callback = function(text)
+				local parsed = parseValue(text)
+				if parsed then
+					State.crystalFarmMinValue = math.max(parsed, 0)
+				end
+			end,
+		})
+
+		MoneyBox:AddInput("CrystalFarmMinLuck", {
+			Text = "Min Luck",
+			Default = "0",
+			Placeholder = "10",
+			Numeric = true,
+			Finished = false,
+			Callback = function(text)
+				local parsed = tonumber(text)
+				if parsed then
+					State.crystalFarmMinLuck = math.max(parsed, 0)
+				end
+			end,
+		})
+
+		MoneyBox:AddDropdown("CrystalFarmTiers", {
+			Text = "Tiers",
+			Values = TIER_NAMES,
+			Multi = true,
+			AllowNull = true,
+			Default = {},
+			Callback = function(value)
+				table.clear(State.crystalFarmTiers)
+				if type(value) == "table" then
+					for key, flag in pairs(value) do
+						if type(key) == "string" and flag == true then
+							State.crystalFarmTiers[key] = true
+						elseif type(flag) == "string" then
+							State.crystalFarmTiers[flag] = true
+						end
+					end
+				elseif type(value) == "string" then
+					State.crystalFarmTiers[value] = true
+				end
 			end,
 		})
 
